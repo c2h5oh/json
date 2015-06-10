@@ -1,0 +1,187 @@
+Index: src/pkg/encoding/json/decode.go
+===================================================================
+--- a/src/pkg/encoding/json/decode.go
++++ b/src/pkg/encoding/json/decode.go
+@@ -92,10 +92,15 @@
+ type UnmarshalTypeError struct {
+ 	Value string       // description of JSON value - "bool", "array", "number -5"
+ 	Type  reflect.Type // type of Go value it could not be assigned to
++	Key   string       // stores the most recent decoded key
+ }
+ 
+ func (e *UnmarshalTypeError) Error() string {
+-	return "json: cannot unmarshal " + e.Value + " into Go value of type " + e.Type.String()
++	err := "json: cannot unmarshal " + e.Value + " into Go value of type " + e.Type.String()
++	if e.Key != "" {
++		err += " in key " + e.Key
++	}
++	return err
+ }
+ 
+ // An UnmarshalFieldError describes a JSON object key that
+@@ -175,6 +180,7 @@
+ 	savedError error
+ 	tempstr    string // scratch space to avoid some allocations
+ 	useNumber  bool
++	key        string // stores the key whose values are being decoded
+ }
+ 
+ // errPhase is used for errors that should not happen unless
+@@ -352,7 +358,7 @@
+ 		return
+ 	}
+ 	if ut != nil {
+-		d.saveError(&UnmarshalTypeError{"array", v.Type()})
++		d.saveError(&UnmarshalTypeError{"array", v.Type(), d.key})
+ 		d.off--
+ 		d.next()
+ 		return
+@@ -371,7 +377,7 @@
+ 		// Otherwise it's invalid.
+ 		fallthrough
+ 	default:
+-		d.saveError(&UnmarshalTypeError{"array", v.Type()})
++		d.saveError(&UnmarshalTypeError{"array", v.Type(), d.key})
+ 		d.off--
+ 		d.next()
+ 		return
+@@ -458,7 +464,7 @@
+ 		return
+ 	}
+ 	if ut != nil {
+-		d.saveError(&UnmarshalTypeError{"object", v.Type()})
++		d.saveError(&UnmarshalTypeError{"object", v.Type(), d.key})
+ 		d.off--
+ 		d.next() // skip over { } in input
+ 		return
+@@ -477,7 +483,7 @@
+ 		// map must have string kind
+ 		t := v.Type()
+ 		if t.Key().Kind() != reflect.String {
+-			d.saveError(&UnmarshalTypeError{"object", v.Type()})
++			d.saveError(&UnmarshalTypeError{"object", v.Type(), d.key})
+ 			break
+ 		}
+ 		if v.IsNil() {
+@@ -486,7 +492,7 @@
+ 	case reflect.Struct:
+ 
+ 	default:
+-		d.saveError(&UnmarshalTypeError{"object", v.Type()})
++		d.saveError(&UnmarshalTypeError{"object", v.Type(), d.key})
+ 		d.off--
+ 		d.next() // skip over { } in input
+ 		return
+@@ -512,6 +518,8 @@
+ 		key, ok := unquoteBytes(item)
+ 		if !ok {
+ 			d.error(errPhase)
++		} else {
++			d.key = string(key)
+ 		}
+ 
+ 		// Figure out field corresponding to key.
+@@ -612,7 +620,7 @@
+ 	}
+ 	f, err := strconv.ParseFloat(s, 64)
+ 	if err != nil {
+-		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeOf(0.0)}
++		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeOf(0.0), d.key}
+ 	}
+ 	return f, nil
+ }
+@@ -645,7 +653,7 @@
+ 			if fromQuoted {
+ 				d.saveError(fmt.Errorf("json: invalid use of ,string struct tag, trying to unmarshal %q into %v", item, v.Type()))
+ 			} else {
+-				d.saveError(&UnmarshalTypeError{"string", v.Type()})
++				d.saveError(&UnmarshalTypeError{"string", v.Type(), d.key})
+ 			}
+ 		}
+ 		s, ok := unquoteBytes(item)
+@@ -679,7 +687,7 @@
+ 			if fromQuoted {
+ 				d.saveError(fmt.Errorf("json: invalid use of ,string struct tag, trying to unmarshal %q into %v", item, v.Type()))
+ 			} else {
+-				d.saveError(&UnmarshalTypeError{"bool", v.Type()})
++				d.saveError(&UnmarshalTypeError{"bool", v.Type(), d.key})
+ 			}
+ 		case reflect.Bool:
+ 			v.SetBool(value)
+@@ -687,7 +695,7 @@
+ 			if v.NumMethod() == 0 {
+ 				v.Set(reflect.ValueOf(value))
+ 			} else {
+-				d.saveError(&UnmarshalTypeError{"bool", v.Type()})
++				d.saveError(&UnmarshalTypeError{"bool", v.Type(), d.key})
+ 			}
+ 		}
+ 
+@@ -702,10 +710,10 @@
+ 		}
+ 		switch v.Kind() {
+ 		default:
+-			d.saveError(&UnmarshalTypeError{"string", v.Type()})
++			d.saveError(&UnmarshalTypeError{"string", v.Type(), d.key})
+ 		case reflect.Slice:
+ 			if v.Type() != byteSliceType {
+-				d.saveError(&UnmarshalTypeError{"string", v.Type()})
++				d.saveError(&UnmarshalTypeError{"string", v.Type(), d.key})
+ 				break
+ 			}
+ 			b := make([]byte, base64.StdEncoding.DecodedLen(len(s)))
+@@ -721,7 +729,7 @@
+ 			if v.NumMethod() == 0 {
+ 				v.Set(reflect.ValueOf(string(s)))
+ 			} else {
+-				d.saveError(&UnmarshalTypeError{"string", v.Type()})
++				d.saveError(&UnmarshalTypeError{"string", v.Type(), d.key})
+ 			}
+ 		}
+ 
+@@ -743,7 +751,7 @@
+ 			if fromQuoted {
+ 				d.error(fmt.Errorf("json: invalid use of ,string struct tag, trying to unmarshal %q into %v", item, v.Type()))
+ 			} else {
+-				d.error(&UnmarshalTypeError{"number", v.Type()})
++				d.error(&UnmarshalTypeError{"number", v.Type(), d.key})
+ 			}
+ 		case reflect.Interface:
+ 			n, err := d.convertNumber(s)
+@@ -752,7 +760,7 @@
+ 				break
+ 			}
+ 			if v.NumMethod() != 0 {
+-				d.saveError(&UnmarshalTypeError{"number", v.Type()})
++				d.saveError(&UnmarshalTypeError{"number", v.Type(), d.key})
+ 				break
+ 			}
+ 			v.Set(reflect.ValueOf(n))
+@@ -760,7 +768,7 @@
+ 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+ 			n, err := strconv.ParseInt(s, 10, 64)
+ 			if err != nil || v.OverflowInt(n) {
+-				d.saveError(&UnmarshalTypeError{"number " + s, v.Type()})
++				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), d.key})
+ 				break
+ 			}
+ 			v.SetInt(n)
+@@ -768,7 +776,7 @@
+ 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+ 			n, err := strconv.ParseUint(s, 10, 64)
+ 			if err != nil || v.OverflowUint(n) {
+-				d.saveError(&UnmarshalTypeError{"number " + s, v.Type()})
++				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), d.key})
+ 				break
+ 			}
+ 			v.SetUint(n)
+@@ -776,7 +784,7 @@
+ 		case reflect.Float32, reflect.Float64:
+ 			n, err := strconv.ParseFloat(s, v.Type().Bits())
+ 			if err != nil || v.OverflowFloat(n) {
+-				d.saveError(&UnmarshalTypeError{"number " + s, v.Type()})
++				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), d.key})
+ 				break
+ 			}
+ 			v.SetFloat(n)
+

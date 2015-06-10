@@ -1,0 +1,12 @@
+Index: src/pkg/encoding/json/decode.go
+--- a/src/pkg/encoding/json/decode.go
++++ b/src/pkg/encoding/json/decode.go
+@@ -483,7 +489,7 @@
+ 		// map must have string kind
+ 		t := v.Type()
+ 		if t.Key().Kind() != reflect.String {
+-			d.saveError(&UnmarshalTypeError{"object", v.Type()})
++			d.saveError(&UnmarshalTypeError{"object", v.Type(), d.key})
+ 			break
+ 		}
+ 		if v.IsNil() {
